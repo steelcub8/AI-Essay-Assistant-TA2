@@ -1,14 +1,16 @@
 
 from typing_extensions import TypedDict
+import sqlite3
 
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_ollama import ChatOllama
+
 from rag_memory import search_memory
 
 
 # ============================================================
-# STATE - Using LangGraph MessagesState
+# STATE - LANGGRAPH MESSAGES STATE
 # ============================================================
 
 class EssayState(MessagesState):
@@ -21,7 +23,7 @@ class EssayState(MessagesState):
 
 
 # ============================================================
-# LOCAL LLM
+# LOCAL LLM - OLLAMA
 # ============================================================
 
 llm = ChatOllama(
@@ -38,7 +40,6 @@ def draft_node(state: EssayState):
 
     topic = state["topic"]
 
-    # Retrieve relevant writing preferences
     try:
         memories = search_memory(
             f"Writing style, language, paragraph length, "
@@ -71,6 +72,7 @@ The user's saved writing preferences are:
 Use these preferences where relevant.
 Make the paragraph clear, relevant and suitable for a
 college assignment.
+
 Return ONLY the paragraph.
 """
 
@@ -95,9 +97,7 @@ def critique_node(state: EssayState):
 
     draft = state["draft"]
 
-    # TRACE 2 DEMONSTRATION
-    # Deliberately demonstrates the no-issues path.
-
+    # Controlled demonstration of the no-issues route
     if state.get("demo_no_issues", False):
 
         critique = "NO_ISSUES"
@@ -121,7 +121,7 @@ Check for:
 4. Organization problems
 
 IMPORTANT:
-If you find ANY problem, you MUST list the problems as:
+If you find ANY problem, list the problems as:
 
 1. Problem...
 2. Problem...
@@ -160,7 +160,7 @@ Return ONLY the critique.
 
 
 # ============================================================
-# CONDITIONAL EDGE
+# CONDITIONAL ROUTING
 # ============================================================
 
 def route_after_critique(state: EssayState):
@@ -181,7 +181,7 @@ def route_after_critique(state: EssayState):
 
 
 # ============================================================
-# NODE 3 - REVISE
+# NODE 3 - REVISION
 # ============================================================
 
 def revise_node(state: EssayState):
@@ -220,7 +220,7 @@ Return ONLY the revised paragraph.
 
 
 # ============================================================
-# BUILD LANGGRAPH
+# BUILD LANGGRAPH WORKFLOW
 # ============================================================
 
 builder = StateGraph(EssayState)
@@ -243,15 +243,29 @@ builder.add_conditional_edges(
 
 builder.add_edge("revise", END)
 
-import sqlite3
 
-conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
+# ============================================================
+# SQLITE CHECKPOINTING
+# ============================================================
+
+conn = sqlite3.connect(
+    "checkpoints.sqlite",
+    check_same_thread=False
+)
+
 checkpointer = SqliteSaver(conn)
-graph = builder.compile(checkpointer=checkpointer)
+
+# Initialize SQLite checkpoint tables
+checkpointer.setup()
+
+# Compile graph with persistent checkpointing
+graph = builder.compile(
+    checkpointer=checkpointer
+)
 
 
 # ============================================================
-# RUN DEMO
+# RUN DEMONSTRATION
 # ============================================================
 
 def run_demo(topic, demo_no_issues=False):
@@ -279,10 +293,18 @@ def run_demo(topic, demo_no_issues=False):
 
     config = {
         "configurable": {
-            "thread_id": "demo_no_issues" if demo_no_issues else "demo_revision"
+            "thread_id": (
+                "demo_no_issues"
+                if demo_no_issues
+                else "demo_revision"
+            )
         }
     }
-    final_state = graph.invoke(initial_state, config=config)
+
+    final_state = graph.invoke(
+        initial_state,
+        config=config
+    )
 
     print("\n" + "#" * 70)
     print("FINAL RESULT")
@@ -307,14 +329,16 @@ def run_demo(topic, demo_no_issues=False):
 
 if __name__ == "__main__":
 
-    # TRACE 1 - ISSUES FOUND
+    # TRACE 1 - ISSUES FOUND / REVISION PATH
     run_demo(
         "Importance of Artificial Intelligence in Education",
         demo_no_issues=False
     )
 
-    # TRACE 2 - NO ISSUES FOUND
+    # TRACE 2 - NO ISSUES / DIRECT END PATH
     run_demo(
         "Benefits of Regular Exercise",
         demo_no_issues=True
     )
+
+    conn.close()
